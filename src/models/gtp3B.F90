@@ -8018,14 +8018,16 @@
       ntot=ntot+1
       species(ntot)=quadname(jp+kp:)
 ! this is second anion
-      write(kou,*)'3B two anions detected, only one normally allowed: ',&
-           trim(species(ntot))
-      write(kou,*)'3B Continue parsing (c) or terminate (default)? '
-      read(*,'(a)')ch1
-      if(ch1.ne.'c' .and. ch1.ne.'C') then
-         gx%bmperr=4399; goto 1000
-      endif
-      write(kou,*)'3B Continuing with two anions; downstream results may be wrong'
+      write(kou,*)'3B second anion detected "',trim(species(ntot)),'" aborting '
+      gx%bmperr=4399; goto 1000
+!      write(kou,*)'3B two anions detected, only one normally allowed: ',&
+!           trim(species(ntot))
+!      write(kou,*)'3B Continue parsing (c) or terminate (default)? '
+!      read(*,'(a)')ch1
+!      if(ch1.ne.'c' .and. ch1.ne.'C') then
+!         gx%bmperr=4399; goto 1000
+!      endif
+!   write(kou,*)'3B Continuing with two anions; downstream results may be wrong'
 !
       call find_species_by_name_exact(species(ntot),isp(ntot))
 !      call find_species_record(species(ntot),isp(ntot))

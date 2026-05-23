@@ -354,7 +354,7 @@ contains
          'TPFUN_SYMBOL    ','CONSTITUTION    ','QUIT            ',&
          'COMPONENTS      ','GENERAL         ','ASSESSMENT_RESLT',&
          'OPTIMIZING_COEFS','EQUILIBRIUM     ','REDUNDANT_SETS  ',&
-         'LINES           ','START_CONSTIT   ','                ']
+         'LINES           ','START_CONSTIT   ','MQMQA           ']
 !-------------------
 ! subsubcommands to AMEND PHASE
 ! the UNIQUAC model specified when entering the phase
@@ -1532,16 +1532,7 @@ contains
        case(11) ! amend general
 ! this asks for some general things ....
           call amend_global_data(cline,last)
-! added special MQMQA option
-          i2=1
-!          call gparidx('Allow mqmqa_multival?',cline,last,i1,i2,'?MQMQA debug')
-! default not allow
-          call gparcdx('Allow multivalenced elements in MQMQA?',&
-               cline,last,1,ch1,'N','?MQMQA multivalued elements')
-          if(ch1.eq.'Y') then
-             write(*,*)'Hopefully it will work now'
-             mqmqa_multival=.true.
-          endif
+!
 !-------------------------
        case(12) ! amend assessment result
           if(.not.allocated(firstash%eqlista)) then
@@ -1760,8 +1751,20 @@ contains
           call copyfracs(fromeq,ceq)
 !          write(*,*)'Not implemented yet'
 !-------------------------
-       case(18) ! Nothing defined
-          write(*,*)'Not implemented yet'
+       case(18) ! MQMQA
+! added special MQMQA option
+          i2=1
+! default is not allow
+          call gparcdx('Allow multivalenced elements in MQMQA?',&
+               cline,last,1,ch1,'N','?MQMQA multivalued elements')
+          if(ch1.eq.'Y') then
+             write(*,*)'Hopefully U/+3, U/+4 etc will work now'
+             mqmqa_multival=.true.
+             no_multiple_species_of_same_element=.false.
+          else
+             mqmqa_multival=.false.
+             no_multiple_species_of_same_element=.true.
+          endif
        END SELECT amend
 !=================================================================
 ! calculate subcommands

@@ -1159,6 +1159,18 @@
   logical :: mqmqder=.false.
 ! this is explicitly set .false. in pmon6.F90 for the NEW command
   logical :: mqmqa_multival=.false.
+! 2026-05-23: testing aid. When TRUE, enter_species refuses to add a new
+! species whose element composition exactly matches an already-entered
+! species (e.g. U+A, U+B, U+C all = "1*U" -> only the first is kept).
+! Lets the user read a multivalent TDB but force single-valence behavior
+! during development.  User-facing command to toggle this is added in
+! pmon6.F90 (TODO by Bo).
+! 2026-05-23: check now lives in mqmqa_species; when .TRUE., rejects an
+! MQMQA quad if any of its cations shares any element with a different
+! cation species already used in an entered quad.  Default flipped
+! .TRUE. for Bo's testing on multivalent TDBs; flip back when the
+! user-toggling pmon6 command is wired up.
+  logical :: no_multiple_species_of_same_element=.true.
   logical :: mqmqtdb=.false.,mqmqxcess=.false.
 !vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
 ! MUST be careful with ncat and nan !!! USED IN MQMQA

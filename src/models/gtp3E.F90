@@ -3520,7 +3520,13 @@
    integer orddistyp(maxorddis),suck,notusedpar,totalpar,reason,zz,dismag
    integer enteredpar,loop,emodel,manylonglines,zp,noparref,pz1,pz2
    type(gtp_phase_add), pointer :: addrec
-   logical tdbwarning,only_typedefs
+   logical tdbwarning,only_typedefs,read_complete
+! 2026-05-23: small cache of function names that have already failed to
+! enter, so subsequent rewinds short-circuit before re-calling store_tpfun
+! (which would re-emit the 3Z parser error, "Failed entering function"
+! message, and the central "3E error 4005" line on every retry).
+   character (len=24) :: failed_funs(50)
+   integer :: nfailed_funs
 ! this is used for reading encrypted FUNCTION and PARAMETER part of a TDB file
 !   integer encrypted   ---- replaced by globaldata%encrypted
 !   character encryptline*128
@@ -3639,6 +3645,13 @@
    rewindx=0
 ! read whole file FIRST to pick up TYPE_DEFs
    only_typedefs=.TRUE.
+! 2026-05-23: TRUE once label 2000's else branch (final EOF, no more rewinds)
+! has fired; the central error handler at label 1000 then falls through to the
+! tail cleanup instead of looping back into the read at line 3647, which would
+! crash with a Fortran "READ after EOF" runtime error.
+   read_complete=.FALSE.
+   nfailed_funs=0
+   failed_funs=' '
 ! return here after rewind
 90  continue
    nl=0
@@ -3876,7 +3889,18 @@
 !         write(*,572)trim(name1),trim(longline(ip:))
 572      format('3E Call mqmqa_species: "',a,'" "',a,'" ')
          call mqmqa_species(name1,longline(ip:),nend)
-         if(gx%bmperr.ne.0) write(*,*)'3E error creating MQMQA quad',gx%bmperr
+         if(gx%bmperr.ne.0) then
+! 2026-05-23: bad MQMQA quad (e.g. multivalent species with
+! mqmqa_multival=.FALSE.) used to fall through to label 573 and abort the
+! whole TDB read.  mqmqa_species now rolls back its partial state, so we
+! can warn and continue to the next line.
+            if(.not.silent) write(kou,*)&
+                 '3E Skipping MQMQA species "',trim(name1),&
+                 '" (error ',gx%bmperr,'), continuing TDB read'
+            gx%bmperr=0
+            tdbwarning=.TRUE.
+            goto 100
+         endif
          goto 573
       endif
       if(eolch(longline,ip)) then
@@ -4508,7 +4532,13 @@
 !              dispartph(thisdis)(1:len_trim(dispartph(thisdis))),ch1,nd1,jl,xxx
 601      format('3E Add parameters from disordered part: ',a,5x,a,2x,2i3,F12.4)
       else
-         if(mqmqa_data%nconst.gt.0) knr(1)=mqmqa_data%nconst
+! 2026-05-23: gate this knr(1) override on the *current* phase being MQMQA.
+! Without the mqmqa guard, every non-disordered phase parsed after the
+! MQMQA phase had its sublattice-1 count overwritten with the global
+! quad count, so enter_phase looped past the real constituents into
+! stale const() slots and spurious "constituent ... twice in sublattice"
+! (4258) errors fired on phases like PNNM and P42_MN.
+         if(mqmqa .and. mqmqa_data%nconst.gt.0) knr(1)=mqmqa_data%nconst
 !         write(*,*)'3E line 4510 **** call enter phase: ',&
 !              name1,knr(1),mqmqa_data%nconst
          call enter_phase(name1,nsl,knr,const,stoik,name2,phtype,&
@@ -5422,10 +5452,20 @@
 !            lrot=0
 !            call store_tpfun(name1,longline,lrot,.TRUE.)
 ! we are using the version which can read encrypted files
+! 2026-05-23: short-circuit if this function has already failed once;
+! avoids the 3Z parser error, the "Failed entering function" line, and
+! the central 3E error re-firing for every rewind through a bad function.
+            do jss=1,nfailed_funs
+               if(failed_funs(jss).eq.name1) goto 100
+            enddo
             call store_tpfun(name1,longline,lrot,rewindx)
             if(gx%bmperr.ne.0) then
 ! one may have error here
                if(.not.silent) write(kou,*)'Failed entering function: ',name1
+               if(nfailed_funs.lt.size(failed_funs)) then
+                  nfailed_funs=nfailed_funs+1
+                  failed_funs(nfailed_funs)=name1
+               endif
                goto 1000
             endif
             if(ocv()) write(*,*)'Entered function: ',name1
@@ -5465,7 +5505,11 @@
 1000 continue
 !   write(*,1111)totalpar,totalpar-notusedpar
 !   write(*,1111)totalpar,enteredpar,notusedpar
-   if(tdbwarning) then
+! 2026-05-23: only show the warning summary + press-RETURN prompt at the
+! true end of the read.  Without the read_complete guard this block fires
+! every time a per-line bmperr routes through label 1000 mid-read, which
+! Bo saw as a flood of "There were warnings" prompts.
+   if(tdbwarning .and. read_complete) then
 1001  continue
       write(*,*)
 ! if silent set ignore warnings
@@ -5492,7 +5536,14 @@
    if(buperr.ne.0 .or. gx%bmperr.ne.0) then
       if(gx%bmperr.eq.0) gx%bmperr=buperr
 ! 4051 is no such constituent
-      if(.not.silent .and. gx%bmperr.ne.4051) &
+! 2026-05-23: also suppress this per-line error print at the true end of
+! the read (after the "There were warnings" prompt fired).  Bo saw a
+! false-positive 4186 missing-function error pointing at the last TDB
+! line (a long REF entry) -- the offending content is benign and the
+! error has already been reset to 0 here, so the message is only noise
+! at the end.  During the read loop (read_complete still .FALSE.) the
+! per-line error is still useful and stays printed.
+      if(.not.silent .and. gx%bmperr.ne.4051 .and. .not.read_complete) &
            write(kou,1002)gx%bmperr,buperr,nl,trim(longline)
 1002  format('3E error ',2i5,', occured at TDB file line ',i7/a)
 !      write(*,*)'Do you want to continue at your own risk anyway?'
@@ -5503,7 +5554,12 @@
 ! reset error code
          buperr=0
          gx%bmperr=0
-         goto 100
+! 2026-05-23: only loop back to the read if we have not yet finished all
+! passes through the file.  After label 2000's else branch fires, the unit
+! is positioned past EOF and any further read(21,...) crashes the program
+! with a Fortran "READ after EOF" runtime error.  Falling through here lets
+! the tail-cleanup code run and readtdb returns normally.
+         if(.not.read_complete) goto 100
 !      endif
    endif
 !000000000000000000000000000000000000000000000000000000
@@ -5529,6 +5585,11 @@
 !000000000000000000000000000000000000000000000000000000
 ! no more read(21 ...
    close(21)
+! 2026-05-23: post-close summary of MQMQA quadruplets (silent if none)
+   if(mqmqa_data%nconst.gt.0) then
+      write(kou,1009)mqmqa_data%nconst
+1009  format('Generated ',i4,' MQMQA quadruplets')
+   endif
 ! read numbers, value after / is maximum
 ! endmember, interactions, property,
 ! tpfuns, composition sets, equilibria
@@ -5624,6 +5685,7 @@
       endif
 ! check if any function not entered
       onlyfun=.FALSE.
+      read_complete=.TRUE.
    endif rewindfile
    goto 1000
 ! end of file while looking for ! terminating a keyword
@@ -5786,7 +5848,8 @@
    endif
    rewind(21)
    nl=0
-   write(*,*)'3E Database file extention is: "',ext,'"'
+!   write(*,*)'3E Database file extention is: "',ext,'"'
+   write(*,*)'3E Database file name ',trim(filename)
    if(ext.eq.'.xtdb' .or. ext.eq.'.XTDB') then
       write(*,*)'3E *** WOW *** Reading elements from XTDB file'
 ! extracting elements from XTDB file <Element Id="FE" etc ... />
