@@ -298,6 +298,11 @@
       endif
 !     write(6,*)'enter_species 2: ',symb,jl,mass,charge
    enddo checkel
+! 2026-05-23: the no_multiple_species_of_same_element guard now lives in
+! mqmqa_species (where cations are already resolved), since the rule is
+! "reject a quad if any cation duplicates the element of a previously-used
+! cation" -- which can only be evaluated for MQMQA quads, not for
+! arbitrary species like O / O2.
    noofsp=noofsp+1
    if(noofsp.gt.maxsp) then
       gx%bmperr=4125
@@ -810,9 +815,9 @@
          endif
       enddo findspecies
 !      write(6,297)' enter_phase constituent error: ',jl,const(jl),jk,nkk
-297 format(a,i3,'>',A,'<',2i3)
-      write(kou,*)'3B Unknown constituent, name must be exact: "',&
-           trim(const(jl)),'"'
+!297 format(a,i3,'>',A,'<',2i3)
+!      write(kou,*)'3B Unknown constituent, name must be exact: "',&
+!           trim(const(jl)),'"'
       gx%bmperr=4051
       goto 1000
 ! found species,
@@ -7868,7 +7873,8 @@
    character const(maxquads)*24
    integer ip,lenc,jp,kp,ncat,ntot,isp(4),loksp,loksparr(4),nspel,thiscon,s1
    integer jelno(9),ielno(9),nextra,ee,nel,order1,order2,lat,nquad,ij,ik
-   logical endmember,sametwice1,sametwice2,nomqmqava
+   logical endmember,sametwice1,sametwice2,nomqmqava,partial_quad
+   logical already_warned
    character*24 cation1,species(4),quaderr
    character quadname*64,ch1*1,elnames(9)*2
    character*2 :: seqnum='00'
@@ -7889,14 +7895,21 @@
    integer nfnnq,nsnnq,pair,qorder(maxconst),haha,zquad
    integer, parameter :: mfnnq=40
    character (len=24) :: fnnquads(mfnnq),snnrefs(4,maxconst-mfnnq)
+! warned-once list for no_multiple_species_of_same_element: one entry per
+! non-base cation species symbol that has already triggered a warning
+   integer, parameter :: mwarned=40
+   integer :: nwarned=0
+   character (len=24) :: warned(mwarned)
+   logical, save :: multiple_element_warning=.TRUE.
 ! this save is probably redundant
-   save seqnum,nfnnq,nsnnq,fnnquads,snnrefs
+   save seqnum,nfnnq,nsnnq,fnnquads,snnrefs,nwarned,warned
 !
-   if(nend.lt.0) then 
+   if(nend.lt.0) then
 ! nend should be a global variable which can be reinitiated with NEW
       nend=0
 ! mqmqanend not used before 260428: use it to handle cations with valences
       mqmqanend=0
+      nwarned=0
    endif
 !   write(*,2)trim(inline),trim(name1),nend
 2  format('3B in mqmqa_species: "',a,'" "',a,'" ',i3)
@@ -7934,6 +7947,9 @@
    haha=0
 ! set TRUE below if two species represent the same element, such as Fe2Q, Fe3Q
    sametwice1=.FALSE.; sametwice2=.FALSE.
+! 2026-05-23: tracks whether a quad-row commit is in flight; if an error
+! reaches label 1000 with this TRUE, the partial row is rolled back.
+   partial_quad=.FALSE.
 ! here a new quadrupole. Third argumment 2 means terminated by space
 ! getext increment ip by 1 before extracting so decrement first
    ip=ip-1
@@ -8017,8 +8033,8 @@
       endif
       ntot=ntot+1
       species(ntot)=quadname(jp+kp:)
-! this is second anion
-      write(kou,*)'3B second anion detected "',trim(species(ntot)),'" aborting '
+! this is a second anion
+      write(kou,*)'3B second anion found "',trim(species(ntot)),'" aborting.'
       gx%bmperr=4399; goto 1000
 !      write(kou,*)'3B two anions detected, only one normally allowed: ',&
 !           trim(species(ntot))
@@ -8055,6 +8071,20 @@
 !      write(*,*)'3B save anion: ',species(ntot),mqmqa_data%anionspix
       double(ntot)=2.0D0
    endif
+! When no_multiple_species_of_same_element=.TRUE., reject a 2-cation quad
+! only when the same species name appears before and after the comma in
+! the cation pair (e.g. U_A,U_A/CL).  Different species names are always
+! allowed even if they share an element (e.g. U_A,U_B/CL).
+   if(no_multiple_species_of_same_element .and. ncat.eq.2) then
+! This test is temporary, it has to be refined
+      if(trim(species(1)).eq.trim(species(2))) then
+         write(kou,1147)trim(species(1)),trim(quadname)
+1147     format('3B quad rejected: cation "',a, &
+              '" appears before and after the comma in: ',a)
+         goto 810
+      endif
+   endif
+!-------------------------- added by Claude ....
 ! New code 22.12.14/BoS to handle element with multiple valences
 ! Maybe modifying code 26.04.28 to handle element with multiple valences
 ! we have to save the SNNs reference to its FNN quads 
@@ -8067,6 +8097,7 @@
       if(nfnnq.gt.size(fnnquads)) then
          write(*,61)nfnnq,size(fnnquads)
 61       format('3B Too many quads in MQMQA liquid ',2i3)
+         nfnnq=nfnnq-1
          gx%bmperr=4399
          goto 1000
       endif
@@ -8098,6 +8129,10 @@
 !----------------------------------------------------------
 ! we have found all species, we have a new quadrupol
    mqmqa_data%nconst=mqmqa_data%nconst+1
+! 2026-05-23: from here on, an error before contyp(10,thiscon) is set to
+! -loksp leaves a row with contyp(10)=0; label 1000 uses partial_quad to
+! roll that back.
+   partial_quad=.TRUE.
 !   write(*,*)'3B mqmqa_data%nconst ',mqmqa_data%nconst
    if(mqmqa_data%nconst.gt.maxquads) then
       write(*,777)maxquads
@@ -8186,7 +8221,13 @@
          if(ielno(ee).eq.0) then
 ! TEMPORARY SKIP MQMQA species with vacancies
             write(*,*)'3B Warning quad with vacancies ingnored: ',trim(quadname)
+            if(ntot.eq.2) then
+               if(nfnnq.gt.0) nfnnq=nfnnq-1
+            else
+               if(nsnnq.gt.0) nsnnq=nsnnq-1
+            endif
             mqmqa_data%nconst=mqmqa_data%nconst-1
+            partial_quad=.FALSE.
             goto 100
 ! TEMPORARY TREATMENT OF VA ALONE IN A SUBLATTICE
 ! ielno(ee)=0 indicate Va, try setting its stoichiometry to zero !!!
@@ -8220,11 +8261,6 @@
                write(kou,3001)trim(quadname),jp,nspel,ee,nel,thiscon
 3001           format('3B Warning: same element twice in: ',&
                     a,2x,2i3,2i3,i3)
-               if(.not.mqmqa_multival) then
-                  write(*,3777)
-3777              format('3B Sorry, not yet implemented')
-                  gx%bmperr=4399; goto 1000
-               endif
 !               write(*,3005)thiscon
 !               write(kou,3002)(mqmqa_data%constoi(pair,s1),pair=1,4)
 ! same cation twice in a quad should not be a problem, it will should a 
@@ -8447,6 +8483,7 @@
 !   enddo
 !   write(*,*)'***********************'
 !
+   partial_quad=.FALSE.
    goto 100
 !-----------------------------------------------------------------------
 ! illegal quadrupole, skip this quadruple there can be 2-4 reals trailing
@@ -8513,6 +8550,24 @@
    enddo
 !
 1000 continue
+! 2026-05-23: roll back a partially-committed quad row so a bad quad
+! (e.g. multivalent same-element-twice with mqmqa_multival=.FALSE., a
+! second-anion line, or a stoichiometry parse failure) does not leave
+! contyp(10)=0 for downstream code to read as a "negative index" error.
+   if(partial_quad) then
+      if(ntot.eq.2) then
+         if(nfnnq.gt.0) nfnnq=nfnnq-1
+      else
+         if(nsnnq.gt.0) nsnnq=nsnnq-1
+      endif
+      if(mqmqa_data%nconst.ge.1) then
+         mqmqa_data%contyp(:,mqmqa_data%nconst)=0
+         mqmqa_data%constoi(:,mqmqa_data%nconst)=zero
+         mqmqa_data%totstoi(mqmqa_data%nconst)=zero
+         mqmqa_data%nconst=mqmqa_data%nconst-1
+      endif
+      partial_quad=.FALSE.
+   endif
 !   write(*,*)'3B leaving mqmqa_species',thiscon
 !   write(*,910)nend
 910 format('3B found ',i3,' FNN constituents in MQMQA')
@@ -8626,6 +8681,7 @@
       if(-mqmqa_data%contyp(10,s1).le.0) then
          write(*,*)'3B negative index to mqmqa symbol:',s1,&
               -mqmqa_data%contyp(10,s1)
+!         const(s1)=splista(-mqmqa_data%contyp(10,s1))%symbol
          stop
       else
          const(s1)=splista(-mqmqa_data%contyp(10,s1))%symbol

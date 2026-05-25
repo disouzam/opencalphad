@@ -4369,7 +4369,13 @@
 ! this is just to check if selected, does not enter species
 !         write(*,*)'3E appending -Q',mqmqa,trim(name3)
          iq=len_trim(name3)
-! if bot supplied in the database add -Q to quads ....
+! if not supplied in the database add -Q to quads ....
+         if(iq.le.1) then
+! there are elements with a single letter K but a quad should be at least 3
+            write(*,383)ll,nr,ip,iq,trim(name3),trim(longline)
+383         format('3E mqmqa constituent, line, position ',4i5,a/a)
+            gx%bmperr=4309; goto 1000
+         endif
          if(name3(iq-1:iq).ne.'-Q') name3(iq+1:iq+2)='-Q'
       endif
 !      write(*,*)'3E Testing constituent: "',name3,'" ',nr
