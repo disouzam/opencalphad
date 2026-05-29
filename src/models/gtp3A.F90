@@ -2260,17 +2260,33 @@ end function find_phasetuple_by_indices
    integer loksp,nspel,nextra
    double precision smass,qsp
 !\end{verbatim} %+
-   integer jl,iel
+   integer jl,iel,jk,nout,ialpha
    if(loksp.le.0 .or. loksp.gt.noofsp) then
 !      write(*,*)'in get_species_data'
       gx%bmperr=4051; goto 1000
    endif
-   nspel=splista(loksp)%noofel
-   elements: do jl=1,nspel
+! Merge ellinks slots that share the same alpha-element index.  A multivalent
+! MQMQA quad lists the same element in two cation slots (e.g. UU2/CL has U
+! once from the U cation and once from the U2-dimer cation).  Downstream
+! consumers (matsmin's pmi%dxmol assignment in meq_onephase, the element
+! matrix builders in gtp3F and gtp3A) index by element and overwrite, so if
+! we did not collapse the slots here the Jacobian would lose one cation's
+! contribution and iteration mass balance would fail.
+   nout=0
+   elements: do jl=1,splista(loksp)%noofel
       iel=splista(loksp)%ellinks(jl)
-      ielno(jl)=ellista(iel)%alphaindex
-      stoi(jl)=splista(loksp)%stoichiometry(jl)
+      ialpha=ellista(iel)%alphaindex
+      do jk=1,nout
+         if(ielno(jk).eq.ialpha) then
+            stoi(jk)=stoi(jk)+splista(loksp)%stoichiometry(jl)
+            cycle elements
+         endif
+      enddo
+      nout=nout+1
+      ielno(nout)=ialpha
+      stoi(nout)=splista(loksp)%stoichiometry(jl)
    enddo elements
+   nspel=nout
    smass=splista(loksp)%mass
    qsp=splista(loksp)%charge
 ! extraproperties for UNIQUAC model (and maybe others)

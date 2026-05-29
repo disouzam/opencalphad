@@ -28,6 +28,15 @@ time or knowledge to answer such questions.
 
 In the list below the most recent changes come first.
 
+2026.05.29 version 6.118.  Finally MQMQA model in OC can handle
+cations with multiple valences, such as UCl3 and UCl4.  Ternary
+parameters still missing and ternary extrapolations not sufficiently
+tested.
+
+2026.05.25 version 6.118.  Some more bugfixes.
+
+2026.05.20 version 6.117.  Some more bugfixes.
+
 2026.05.14 version 6.116.  Corrected the alphabetical order of the
 elements of species needed for the MQMQA phase.
 
